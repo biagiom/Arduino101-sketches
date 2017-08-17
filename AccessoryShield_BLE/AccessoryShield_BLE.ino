@@ -1,16 +1,31 @@
+/*
+ Use your Arduino/Genuino 101 to control sensors and actuators of
+ DFRobot Accessory Shield though BLE.
+
+ Hardware:
+ * Arduino/Genuino 101
+ * DFRobot Accessory Shield
+
+ created 10 Sept 2016
+ by Biagio Montaruli
+ updated 16 August 2017
+
+ this code is in the public domain
+ */
 #include <AccessoryShield.h>
 #include <CurieBLE.h>
 
-// #define SKETCH_DEBUG
+#define SKETCH_DEBUG
 
 #define TEMP_UNIT CELSIUS
 #define LED_NUMBER 3
 #define BUZZER_VALUES 3
 #define DHT11_VALUES 4
+#define UPDATE_DELAY 3000
 
 // create a new array setting the initial state of leds :
 // when the sketch starts the red, green and blue leds are OFF
-unsigned char RGBledState[] = {0, 0, 0};
+byte RGBledState[] = {0, 0, 0};
 String ledColors[] = {"Red", "Green", "Blue"};
 
 typedef struct {
@@ -18,7 +33,7 @@ typedef struct {
   unsigned int delayTime;
   bool actived;
 } BuzzerData;
-BuzzerData buzzer = { 125, 2, false};
+BuzzerData buzzer = {125, 2, false};
 unsigned char buzzerValues[BUZZER_VALUES];
 
 typedef struct {
@@ -28,21 +43,22 @@ typedef struct {
   float heatIndex;
 } DHT11sensor;
 DHT11sensor dht11;
-unsigned char DHT11data[4];
+unsigned char DHT11data[DHT11_VALUES];
 
 unsigned int potValue;
 
-JoystickMode joystickOldState, joystickNewState;
-String joystickModes[] = {"NONE", "UP", "DOWN", "LEFT", "RIGHT", "PUSHED", "NONE_OR_DOWN"};
+String joystickInitialStatus, joystickNewStatus;
+#if (defined(ARDUINO_ARCH_ARC32) || defined(__SAM3X8E__) || defined(ARDUINO_ARCH_SAMD))
+String joystickModes[] = {"NONE_OR_DOWN", "UP", "LEFT", "RIGHT", "PUSHED"};
+#define MAX_LENGTH 13
+#else
+String joystickModes[] = {"NONE", "DOWN", "UP", "LEFT", "RIGHT", "PUSHED"};
+#define MAX_LENGTH 7
+#endif
 
-typedef struct {
-  JoystickMode joystickValue;
-  String joystickStringState;
-} JoystickData;
+bool relayStatus;
 
-bool relayState;
-
-BLEPeripheral Genuino101Peripheral;
+unsigned long startTime, currentTime;
 
 BLEService AccessoryShieldControl("6BC62B12-E4CE-41C3-9906-475A843245CA");
 
@@ -56,25 +72,20 @@ BLECharacteristic DHT11("6BC62B15-E4CE-41C3-9906-475A843245CA",
 
 BLECharacteristic Buzzer("6BC62B18-E4CE-41C3-9906-475A843245CA",
                          BLEWrite | BLERead,
-                         sizeof(Buzzer));
+                         sizeof(buzzerValues));
 
-BLEUnsignedCharCharacteristic Pot("6BC62B1b-E4CE-41C3-9906-475A843245CA",
+BLEUnsignedIntCharacteristic Pot("6BC62B1b-E4CE-41C3-9906-475A843245CA",
                                  BLERead | BLENotify);
 
-BLEUnsignedCharCharacteristic Joystick("6BC62B1e-E4CE-41C3-9906-475A843245CA",
-                                       BLERead | BLENotify);
+BLECharacteristic Joystick("6BC62B1e-E4CE-41C3-9906-475A843245CA",
+                            BLERead | BLENotify,
+                            MAX_LENGTH);
 
-BLEUnsignedCharCharacteristic Relay("6BC62B21-E4CE-41C3-9906-475A843245CA",
-                                    BLERead | BLEWrite);
-
-//float temp, humidity;
-//unsigned int buzzerFreq;
-//int dht11State;
-//JoystickMode joystickOldValue, joystickNewValue;
-//long timeCounter;
+BLEByteCharacteristic Relay("6BC62B21-E4CE-41C3-9906-475A843245CA",
+                             BLERead | BLEWrite);
 
 void setup() {
-  // Initialize Serial comunication
+  // Initialize Serial communication at 115200 bps
   Serial.begin(115200);
   // wait for the serial port to connect, Needed for USB native only
   while (!Serial) ;
@@ -83,19 +94,19 @@ void setup() {
 
   accessoryShield.clearOledDisplay();
   accessoryShield.oledPaint();
+  
+  // Starting CurieBLE library
+  BLE.begin();
 
-  Genuino101Peripheral.setLocalName("AccessoryShield");
-  // Genuino101Peripheral.setDeviceName("Genuino101");
-  Genuino101Peripheral.setAdvertisedServiceUuid(AccessoryShieldControl.uuid());
-  // Genuino101Peripheral.setAppearance(BLE_GAP_APPEARANCE_TYPE_GENERIC_COMPUTER);
-  Genuino101Peripheral.setEventHandler(BLEConnected, BleConnectedCallback);
-  Genuino101Peripheral.setEventHandler(BLEDisconnected, BleDisconnectedCallback);
+  BLE.setLocalName("AccessoryShield");
+  BLE.setDeviceName("Genuino101");
+  BLE.setAdvertisedService(AccessoryShieldControl);
+  // BLE.setAppearance(BLE_GAP_APPEARANCE_TYPE_GENERIC_COMPUTER);
+  BLE.setEventHandler(BLEConnected, BleConnectedCallback);
+  BLE.setEventHandler(BLEDisconnected, BleDisconnectedCallback);
 
-  // Add the AccessoryShieldControl Serivce to Attribute Table
-  Genuino101Peripheral.addAttribute(AccessoryShieldControl);
-
-  // Add the RGBchar Characteristic to Attribute Table
-  Genuino101Peripheral.addAttribute(RGBled);
+  // Add the RGBchar Characteristic to AccessoryShieldControl service
+  AccessoryShieldControl.addCharacteristic(RGBled);
   RGBled.setValue(RGBledState, LED_NUMBER);
   RGBled.setEventHandler(BLEWritten, RGBWrittenCallback);
 
@@ -103,73 +114,90 @@ void setup() {
   dht11.temp = accessoryShield.getTemperature(dht11.tempUnit);
   dht11.humidity = accessoryShield.getHumidity();
   dht11.heatIndex = accessoryShield.computeHeatIndex(dht11.tempUnit);
-  Serial.print("\nTemperature = ");
+#ifdef SKETCH_DEBUG
+  Serial.print("\nTemperature: ");
   Serial.print(dht11.temp);
   Serial.println(getTempUnitSymbol(dht11.tempUnit));
-  Serial.print("Humidity = ");
+  Serial.print("Humidity: ");
   Serial.println(dht11.humidity);
-  Serial.print("Heat index = ");
+  Serial.print("Heat index: ");
   Serial.println(dht11.heatIndex);
+#endif
 
   DHT11data[0] = dht11.temp;
   DHT11data[1] = dht11.tempUnit;
   DHT11data[2] = dht11.humidity;
   DHT11data[3] = dht11.heatIndex;
 
-  Genuino101Peripheral.addAttribute(DHT11);
+  // Add the DHT11 Characteristic to AccessoryShieldControl Service
+  AccessoryShieldControl.addCharacteristic(DHT11);
   DHT11.setValue(DHT11data, DHT11_VALUES);
 
-  Serial.print("\nBuzzer initial frequency = ");
+#ifdef SKETCH_DEBUG
+  Serial.print("\nBuzzer initial frequency: ");
   Serial.println(buzzer.freq);
   Serial.print("Buzzer initial delay = ");
   Serial.println(buzzer.delayTime);
-  Serial.print("Buzzer initial state = ");
+  Serial.print("Buzzer initial status: ");
   if (buzzer.actived) {
     Serial.println("Activated (HIGH)");
   }
   else {
     Serial.println("Disabled (LOW)");
   }
+#endif
+
   buzzerValues[0] = buzzer.freq;
   buzzerValues[1] = buzzer.delayTime;
   buzzerValues[2] = buzzer.actived;
 
-  Genuino101Peripheral.addAttribute(Buzzer);
+  // Add the Buzzer Characteristic to AccessoryShieldControl Service
+  AccessoryShieldControl.addCharacteristic(Buzzer);
   Buzzer.setValue(buzzerValues, BUZZER_VALUES);
   Buzzer.setEventHandler(BLEWritten, BuzzerWrittenCallback);
 
   potValue = accessoryShield.readPot();
-  Serial.print("\nPotentiometer value = ");
+#ifdef SKETCH_DEBUG
+  Serial.print("\nRotary potentiometer value: ");
   Serial.println(potValue);
-  Genuino101Peripheral.addAttribute(Pot);
+#endif
+  // Add the Pot Characteristic to AccessoryShieldControl Service
+  AccessoryShieldControl.addCharacteristic(Pot);
   Pot.setValue(potValue);
 
-  joystickOldState = accessoryShield.getJoystickValue();
-  Serial.print("\nJoystick initial state : ");
-  Serial.println(getJoystickStringState(joystickOldState));
-  Genuino101Peripheral.addAttribute(Joystick);
-  Joystick.setValue(joystickOldState);
+  joystickInitialStatus = getJoystickStateStr(accessoryShield.getJoystickValue());
+#ifdef SKETCH_DEBUG
+  Serial.print("\nJoystick initial status: ");
+  Serial.println(joystickInitialStatus);
+#endif  
+  // Add the Joystick Characteristic to AccessoryShieldControl Service
+  AccessoryShieldControl.addCharacteristic(Joystick);
+  Joystick.setValue(joystickInitialStatus.c_str());
 
-  relayState = accessoryShield.getRelayState();
-  Serial.print("\nRelay initial state = ");
-  if (relayState) {
-    Serial.println("Activated (HIGH)");
+  relayStatus = accessoryShield.getRelayState();
+#ifdef SKETCH_DEBUG
+  Serial.print("\nRelay initial status: ");
+  if (relayStatus) {
+    Serial.println("Activated (ON)");
   }
   else {
-    Serial.println("Disabled (LOW)");
+    Serial.println("Disabled (OFF)");
   }
-  Genuino101Peripheral.addAttribute(Relay);
-  Relay.setValue(relayState);
+#endif
+  AccessoryShieldControl.addCharacteristic(Relay);
+  Relay.setValue(relayStatus);
   Relay.setEventHandler(BLEWritten, RelayWrittenCallback);
 
-  Genuino101Peripheral.begin();
-  Serial.println("\nActivating Genuino 101 BLE ...");
-  Serial.println("Listening for central devices and waiting for connections ...");
+  // Add the AccessoryShieldControl serivce to Attribute Table
+  BLE.addService(AccessoryShieldControl);
+
+  BLE.advertise();
+  Serial.println("Start advertising, listening for central devices and waiting for connections ...");
 }
 
 void loop() {
-  Genuino101Peripheral.poll();
-
+  BLE.poll();
+  
   updateAccessoryShieldData();
 }
 
@@ -205,97 +233,97 @@ void updateAccessoryShieldData(void) {
 
   potValue = accessoryShield.readPot();
 #ifdef SKETCH_DEBUG
-  Serial.print("\nPotentiometer value = ");
+  Serial.print("\nRotary potentiometer value = ");
   Serial.println(potValue);
 #endif
   Pot.setValue(potValue);
 
-  joystickNewState = accessoryShield.getJoystickValue();
+  joystickNewStatus = getJoystickStateStr(accessoryShield.getJoystickValue());
 #ifdef SKETCH_DEBUG
-  Serial.print("\nJoystick state : ");
-  Serial.println(getJoystickStringState(joystickNewState));
+  Serial.print("\nJoystick status: ");
+  Serial.println(joystickNewStatus);
 #endif
-  if (joystickNewState != joystickOldState) {
-    Joystick.setValue(joystickNewState);
-    joystickOldState = joystickNewState;
+  if (!joystickNewStatus.equals(joystickInitialStatus)) {
+    Joystick.setValue(joystickNewStatus.c_str());
+    joystickInitialStatus = String(joystickNewStatus);
   }
 
-  relayState = accessoryShield.getRelayState();
+  relayStatus = accessoryShield.getRelayState();
 #ifdef SKETCH_DEBUG
-  Serial.print("\nRelay initial state = ");
-  if (relayState) {
-    Serial.println("Activated (HIGH)");
+  Serial.print("\nRelay status: ");
+  if (relayStatus) {
+    Serial.println("Activated (ON)");
   }
   else {
-    Serial.println("Disabled (LOW)");
+    Serial.println("Disabled (OFF)");
   }
 #endif
-  Relay.setValue(relayState);
+  Relay.setValue(relayStatus);
 }
 
-String getJoystickStringState(JoystickMode jMode) {
+String getJoystickStateStr(JoystickMode jMode) {
   return joystickModes[jMode];
 }
 
-void BleConnectedCallback(BLECentral &central) {
-  Serial.println("\nGenuino 101 peripheral connected to central device");
-  Serial.print("Bluetooth device address for central device is ");
-  Serial.println(central.address());
+void BleConnectedCallback(BLEDevice central) {
+  Serial.println("\nGenuino 101 (Peripheral) connected to Central device with ");
+  Serial.print(central.address());
+  Serial.println(" Bluetooth device address.");
 }
 
-void BleDisconnectedCallback(BLECentral &central) {
-  Serial.println("\nGenuino 101 peripheral disconnected from central device");
-  Serial.print("Bluetooth device address for central device is ");
-  Serial.println(central.address());
+void BleDisconnectedCallback(BLEDevice central) {
+  Serial.println("\nGenuino 101 (Peripheral) disconnected from Central device with ");
+  Serial.print(central.address());
+  Serial.println(" Bluetooth device address.");
 }
 
-void RGBWrittenCallback(BLECentral &centralDevice, BLECharacteristic &RGBchar) {
+void RGBWrittenCallback(BLEDevice central, BLECharacteristic RGBchar) {
   const unsigned char *valuesUpdated = RGBchar.value();
   unsigned int dataLength = RGBchar.valueLength();
-  Serial.print("\nRGBled Characteristic has ");
+  Serial.print("\nCentral device has send ");
   Serial.print(dataLength);
   Serial.println(" values");
   if (dataLength == LED_NUMBER) {
-    Serial.println("RGB led states changed by central device.");
+    Serial.println("RGBled values updated:");
     for (byte led = 0; led < LED_NUMBER; led++) {
       RGBledState[led] = valuesUpdated[led];
       Serial.print(ledColors[led]);
-      Serial.print(" led state : ");
+      Serial.print(" led status : ");
       Serial.println(RGBledState[led]);
     }
-    Serial.println("Setting the RGB led states ...");
+    Serial.println("Updating RGB led status...");
     accessoryShield.setRGB(RGBledState[0], RGBledState[1], RGBledState[2]);
-
   }
   else {
     Serial.println("Invalid number of data received");
   }
 }
 
-void BuzzerWrittenCallback(BLECentral &centralDevice, BLECharacteristic &buzzerChar) {
+void BuzzerWrittenCallback(BLEDevice central, BLECharacteristic buzzerChar) {
   const unsigned char *valuesUpdated = buzzerChar.value();
   unsigned int dataLength = buzzerChar.valueLength();
-  Serial.print("\nBuzzer Characteristic has ");
+  Serial.print("\nCentral device has send ");
   Serial.print(dataLength);
   Serial.println(" values");
   if (dataLength == BUZZER_VALUES) {
     Serial.println("Buzzer values updated by central device :");
     buzzer.freq = valuesUpdated[0];
-    Serial.print("Buzzer frequency = ");
+    Serial.print("Buzzer frequency: ");
     Serial.println(buzzer.freq);
     buzzer.delayTime = valuesUpdated[1];
-    Serial.print("Buzzer delay = ");
+    Serial.print("Buzzer delay: ");
     Serial.println(buzzer.delayTime);
-    Serial.print("Buzzer state = ");
+    Serial.print("Buzzer status: ");
     if (valuesUpdated[2]) {
-      Serial.println("Activated (HIGH)");
+      Serial.println("ON");
       buzzer.actived = true;
-      Serial.println("Playing the buzzer");
+      Serial.println("Playing the buzzer...");
       accessoryShield.playBuzzer(buzzer.freq, buzzer.delayTime);
     }
     else {
-      Serial.println("Disabled (LOW)");
+      Serial.println("OFF");
       buzzer.actived = false;
+      accessoryShield.disableBuzzer();
     }
   }
   else {
@@ -303,15 +331,16 @@ void BuzzerWrittenCallback(BLECentral &centralDevice, BLECharacteristic &buzzerC
   }
 }
 
-void RelayWrittenCallback(BLECentral &centralDevice, BLECharacteristic &relayChar) {
+void RelayWrittenCallback(BLEDevice central, BLECharacteristic relayChar) {
   const unsigned char *updatedValue = relayChar.value();
-  Serial.println("\nRelay state updated by central device");
-  if (*updatedValue) {
-    Serial.println("Activating the relay");
+  relayStatus = (bool) *updatedValue;
+  Serial.println("\nRelay status updated by central device");
+  if (relayStatus) {
+    Serial.println("Activating the relay...");
     accessoryShield.activateRelay();
   }
   else {
-    Serial.println("Disabling the relay");
+    Serial.println("Disabling the relay...");
     accessoryShield.disableRelay();
   }
 }

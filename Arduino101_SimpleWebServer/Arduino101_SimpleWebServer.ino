@@ -1,5 +1,5 @@
 /*
- Genuino101_SimpleWebServer
+ Arduino101_SimpleWebServer
 
  Use your Arduino/Genuino 101 with the Ethernet Shield to create a
  simple Web Server
@@ -10,6 +10,7 @@
 
  created 10 Sept 2016
  by Biagio Montaruli
+ updated 17 August 2017
 
  this code is in the public domain
 
@@ -22,7 +23,7 @@ static byte MacAddress[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
 
 // Instatiate a new object that represent an Ethernet Server
 // listening on port 80 for client requests
-// In this way Arduino/genuino acts as an Ethernet Server !
+// In this way your Arduino 101 acts as an Ethernet Server!
 unsigned int ethPort = 80;
 EthernetServer server(ethPort);
 
@@ -50,33 +51,32 @@ void setup() {
   digitalWrite(SdChipSelect, HIGH);
   
   // Initializes the ethernet library and network settings
-  // Try to set up a new Ethernet connection and obtain a new IP address
+  // Try to set up a new Ethernet connection and obtain a new IPv4 address
   // from the DHCP server. Passing only the MAC address of the
   // Ethernet Shield to begin() method use the DHCP server to obtain
   // the IP address of Genuino 101 with the Ethernet Shield.
   // The begin() method returns 1 on a successful DHCP connection, 
   // or 0 on failure.
   if((Ethernet.begin(MacAddress) == 1) && (useDHCP == true)) {
-    Serial.println("New Ethernet connection successfully initialized !");
-    Serial.println("Printing info about the new Ethernet connection ...");
-    Serial.print("IP address of Genuino 101 Web Server = ");
+    Serial.println("New Ethernet connection successfully initialized with DHCP!");
+    Serial.println("Printing info about the new connection...");
+    Serial.print("IPv4 address of Genuino 101 Web Server: ");
     Serial.println(Ethernet.localIP());
-    Serial.print("IP address of DNS Server = ");
+    Serial.print("IPv4 address of DNS Server: ");
     Serial.println(Ethernet.dnsServerIP());
-    Serial.print("Gateway IP = ");
+    Serial.print("Gateway IPv4: ");
     Serial.println(Ethernet.gatewayIP());
-    Serial.print("Subnet Mask = ");
+    Serial.print("Subnet Mask: ");
     Serial.println(Ethernet.subnetMask());
   }
   else {
     Serial.println("Failed to configure a new Ethernet connection through DHCP !");
-    Serial.println("Configuring the new connection using a static IP ...");
-    // using a static IP : 192.168.1.25
-    // NOTE : set the static IP according your local ethernat configuration
+    Serial.println("Configuring the new connection using a static IPv4...");
+    // using a static IPv4 : 192.168.1.25
+    // NOTE : set the static IP according your local network configuration
     IPAddress staticIP(192, 168, 1, 25);
     Ethernet.begin(MacAddress, staticIP);
-    Serial.print("Configuring the new Ethernet connection using the static IP ...");
-    Serial.print("Static IP address of your Genuino 101 Web Server = ");
+    Serial.print("Static IPv4 address of your Arduino 101 Web Server: ");
     for(uint8_t octet = 0; octet < 4; octet++) {
       Serial.print(staticIP[octet]);
       if(octet != 3) {
@@ -86,24 +86,24 @@ void setup() {
         Serial.println();
       }
     }
-    Serial.print("Gateway IP = ");
+    Serial.print("Gateway IPv4 ");
     Serial.println(Ethernet.gatewayIP());
-    Serial.print("Subnet Mask = ");
+    Serial.print("Subnet Mask: ");
     Serial.println(Ethernet.subnetMask());
   }
 }
 
 void loop() {
-  // Genuino 101 (Server) listens for requests of new clients
+  // Arduino 101 (Server) listens for requests of new clients
   EthernetClient client = server.available();
-  // if a new client want to connect ...
+  // if a new client wants to connect...
   if(client) {
-    Serial.println("Getting the connection request from a new client ...");
+    Serial.println("Getting the connection request from a new client...");
     bool detectBlankLine = true; 
-    // while the client is connected to the Genuino 101 server
+    // while the client is connected to the Arduino 101 Web Server
     while (client.connected()) {
 
-      // if the client has sent some data Genuino 101
+      // if the client has sent some data
       if (client.available()) {
 
         // read the incoming byte and print it in the Serial monitor
@@ -111,8 +111,8 @@ void loop() {
         Serial.write(newData);
         
         // the http request of the client ends when the server receives
-        // a newline character followed by a blank line and then
-        // you can send the HTTP Response and a simple Web Page
+        // a newline character followed by a blank line.
+        // Then you can send the HTTP Response and a simple Web Page
         if((newData == '\n') && (detectBlankLine)) {
           // send a standard http response header
           client.println("HTTP/1.1 200 OK");
@@ -125,11 +125,11 @@ void loop() {
           client.println("<!DOCTYPE HTML>");
           client.println("<html>");
           client.println("<head>");
-          client.println("<title>Genuino 101 Web Server</title>");
+          client.println("<title>Arduino 101 Web Server</title>");
           client.println("</head>");
           client.println("<body>");
-          client.println("<h1>Hello Genuino 101 Web Server !</h1>");
-          client.println("<p>Simple Web server realized with Genuino 101 and the Ethernet Shield</p>");
+          client.println("<h1>Hello Arduino 101 Web Server !</h1>");
+          client.println("<p>Simple Web server build with Arduino 101 and the Ethernet Shield</p>");
           client.println("</body>");
           client.println("</html>");
           // break connection with the client
@@ -145,8 +145,8 @@ void loop() {
       }
     }
     // client has been disconnected ...
-    // wait for the browser to receive data send by Genuino 101 Server
-    delay(1);
+    // wait for the browser to receive data send by Arduino 101 Server
+    delay(5);
     // close the connection with the client
     client.stop();
     Serial.println("Client disconnected");
