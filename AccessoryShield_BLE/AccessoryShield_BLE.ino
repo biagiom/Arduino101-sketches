@@ -8,7 +8,7 @@
 
  created 10 Sept 2016
  by Biagio Montaruli
- updated 16 August 2017
+ updated 18 August 2017
 
  this code is in the public domain
  */
@@ -17,11 +17,10 @@
 
 #define SKETCH_DEBUG
 
-#define TEMP_UNIT CELSIUS
+#define TEMP_UNIT DHT11_TEMP_CELSIUS
 #define LED_NUMBER 3
 #define BUZZER_VALUES 3
 #define DHT11_VALUES 4
-#define UPDATE_DELAY 3000
 
 // create a new array setting the initial state of leds :
 // when the sketch starts the red, green and blue leds are OFF
@@ -31,7 +30,7 @@ String ledColors[] = {"Red", "Green", "Blue"};
 typedef struct {
   unsigned int freq;
   unsigned int delayTime;
-  bool actived;
+  bool state;
 } BuzzerData;
 BuzzerData buzzer = {125, 2, false};
 unsigned char buzzerValues[BUZZER_VALUES];
@@ -49,11 +48,9 @@ unsigned int potValue;
 
 String joystickInitialStatus, joystickNewStatus;
 #if (defined(ARDUINO_ARCH_ARC32) || defined(__SAM3X8E__) || defined(ARDUINO_ARCH_SAMD))
-String joystickModes[] = {"NONE_OR_DOWN", "UP", "LEFT", "RIGHT", "PUSHED"};
-#define MAX_LENGTH 13
+#define MAX_DATA_LENGTH 13
 #else
-String joystickModes[] = {"NONE", "DOWN", "UP", "LEFT", "RIGHT", "PUSHED"};
-#define MAX_LENGTH 7
+#define MAX_DATA_LENGTH 7
 #endif
 
 bool relayStatus;
@@ -79,7 +76,7 @@ BLEUnsignedIntCharacteristic Pot("6BC62B1b-E4CE-41C3-9906-475A843245CA",
 
 BLECharacteristic Joystick("6BC62B1e-E4CE-41C3-9906-475A843245CA",
                             BLERead | BLENotify,
-                            MAX_LENGTH);
+                            MAX_DATA_LENGTH);
 
 BLEByteCharacteristic Relay("6BC62B21-E4CE-41C3-9906-475A843245CA",
                              BLERead | BLEWrite);
@@ -139,7 +136,7 @@ void setup() {
   Serial.print("Buzzer initial delay = ");
   Serial.println(buzzer.delayTime);
   Serial.print("Buzzer initial status: ");
-  if (buzzer.actived) {
+  if (buzzer.state) {
     Serial.println("Activated (HIGH)");
   }
   else {
@@ -149,7 +146,7 @@ void setup() {
 
   buzzerValues[0] = buzzer.freq;
   buzzerValues[1] = buzzer.delayTime;
-  buzzerValues[2] = buzzer.actived;
+  buzzerValues[2] = buzzer.state;
 
   // Add the Buzzer Characteristic to AccessoryShieldControl Service
   AccessoryShieldControl.addCharacteristic(Buzzer);
@@ -165,7 +162,7 @@ void setup() {
   AccessoryShieldControl.addCharacteristic(Pot);
   Pot.setValue(potValue);
 
-  joystickInitialStatus = getJoystickStateStr(accessoryShield.getJoystickValue());
+  joystickInitialStatus = accessoryShield.getJoystickStateStr();
 #ifdef SKETCH_DEBUG
   Serial.print("\nJoystick initial status: ");
   Serial.println(joystickInitialStatus);
@@ -203,10 +200,10 @@ void loop() {
 
 String getTempUnitSymbol(TemperatureUnit tempUnit) {
   String symbol = "°C";
-  if (tempUnit == FARENEITH) {
+  if (tempUnit == DHT11_TEMP_FARENEITH) {
     symbol.replace("C", "F");
   }
-  else if (tempUnit == KELVIN) {
+  else if (tempUnit == DHT11_TEMP_KELVIN) {
     symbol.replace("°C", "K");
   }
   return symbol;
@@ -233,12 +230,12 @@ void updateAccessoryShieldData(void) {
 
   potValue = accessoryShield.readPot();
 #ifdef SKETCH_DEBUG
-  Serial.print("\nRotary potentiometer value = ");
+  Serial.print("\nRotary potentiometer value: ");
   Serial.println(potValue);
 #endif
   Pot.setValue(potValue);
 
-  joystickNewStatus = getJoystickStateStr(accessoryShield.getJoystickValue());
+  joystickNewStatus = accessoryShield.getJoystickStateStr();
 #ifdef SKETCH_DEBUG
   Serial.print("\nJoystick status: ");
   Serial.println(joystickNewStatus);
@@ -261,18 +258,14 @@ void updateAccessoryShieldData(void) {
   Relay.setValue(relayStatus);
 }
 
-String getJoystickStateStr(JoystickMode jMode) {
-  return joystickModes[jMode];
-}
-
 void BleConnectedCallback(BLEDevice central) {
-  Serial.println("\nGenuino 101 (Peripheral) connected to Central device with ");
+  Serial.println("\nArduino 101 (Peripheral) connected to Central device with ");
   Serial.print(central.address());
   Serial.println(" Bluetooth device address.");
 }
 
 void BleDisconnectedCallback(BLEDevice central) {
-  Serial.println("\nGenuino 101 (Peripheral) disconnected from Central device with ");
+  Serial.println("\nArduino 101 (Peripheral) disconnected from Central device with ");
   Serial.print(central.address());
   Serial.println(" Bluetooth device address.");
 }
@@ -316,14 +309,14 @@ void BuzzerWrittenCallback(BLEDevice central, BLECharacteristic buzzerChar) {
     Serial.print("Buzzer status: ");
     if (valuesUpdated[2]) {
       Serial.println("ON");
-      buzzer.actived = true;
+      buzzer.state = true;
       Serial.println("Playing the buzzer...");
       accessoryShield.playBuzzer(buzzer.freq, buzzer.delayTime);
     }
     else {
       Serial.println("OFF");
-      buzzer.actived = false;
-      accessoryShield.disableBuzzer();
+      buzzer.state = false;
+      accessoryShield.buzzerOFF();
     }
   }
   else {
@@ -337,11 +330,11 @@ void RelayWrittenCallback(BLEDevice central, BLECharacteristic relayChar) {
   Serial.println("\nRelay status updated by central device");
   if (relayStatus) {
     Serial.println("Activating the relay...");
-    accessoryShield.activateRelay();
+    accessoryShield.relayON();
   }
   else {
     Serial.println("Disabling the relay...");
-    accessoryShield.disableRelay();
+    accessoryShield.relayOFF();
   }
 }
 

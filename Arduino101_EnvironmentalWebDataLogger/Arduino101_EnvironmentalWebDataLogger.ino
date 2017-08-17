@@ -257,7 +257,7 @@ void loop() {
           client.println("<p>Genuino 101 read temperature and humidity from the DHT11 sensor of Accessory Shield"
                          " and store the values in the text file Datalogger.txt on the SD card of Ethernet Shield</p>");
           // get temperature in Celsius degrees and huumidity from the DHT11 sensor
-          dht11State = accessoryShield.getEnvironmentalData(tempC, humidity, CELSIUS);
+          dht11State = accessoryShield.getEnvironmentalData(tempC, humidity, DHT11_TEMP_CELSIUS);
           // convert temperature from Celsius to Fareneith 
           tempF = accessoryShield.convertTempCtoF(tempC);
           // convert temperature from Celsius to Kelvin
